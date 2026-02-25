@@ -7,7 +7,6 @@ Handles question generation, parsing, and management
 import re
 import logging
 from typing import Dict, List, Optional, Tuple
-from langchain_community.llms import OpenAI
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -15,31 +14,34 @@ logger = logging.getLogger(__name__)
 
 class QuestionGenerator:
     """Handles question generation from PDF content"""
-    
-    def __init__(self, llm: OpenAI):
+
+    # ~10,000 chars ≈ 2,500 tokens, leaving plenty of room for the prompt
+    # template and the model's response within a 16k context window.
+    MAX_PDF_CHARS = 10_000
+
+    def __init__(self, llm):
         self.llm = llm
-    
+
     def generate_questions_from_pdf(self, pdf_content: str, num_questions: int = 20) -> List[Dict]:
         """
-        Generate viva questions from PDF content
-        
-        Args:
-            pdf_content: Extracted text from PDF
-            num_questions: Number of questions to generate (default 20)
-        
+        Generate viva questions from PDF content.
+
         Returns:
-            List of question dictionaries
+            List of question dictionaries, or raises on API errors.
         """
-        try:
-            prompt = self._create_generation_prompt(pdf_content, num_questions)
-            response = self.llm.invoke(prompt)
-            raw_output = response.strip() if isinstance(response, str) else response.content.strip()
-            
-            return self._parse_generated_questions(raw_output)
-            
-        except Exception as e:
-            logger.error(f"Error generating questions from PDF: {e}")
-            return []
+        # Truncate large PDFs to avoid token-limit errors
+        if len(pdf_content) > self.MAX_PDF_CHARS:
+            logger.warning(
+                f"PDF content truncated from {len(pdf_content)} to {self.MAX_PDF_CHARS} chars"
+            )
+            pdf_content = pdf_content[: self.MAX_PDF_CHARS]
+
+        prompt = self._create_generation_prompt(pdf_content, num_questions)
+        response = self.llm.invoke(prompt)
+        # ChatOpenAI returns an AIMessage; legacy LLMs return a plain string
+        raw_output = response.content.strip() if hasattr(response, "content") else response.strip()
+
+        return self._parse_generated_questions(raw_output)
     
     def _create_generation_prompt(self, pdf_content: str, num_questions: int) -> str:
         """Create the prompt for question generation"""
@@ -257,10 +259,12 @@ class QuestionManager:
     
     def generate_and_validate_questions(self, pdf_content: str, num_questions: int = 20) -> Tuple[List[Dict], List[str]]:
         """
-        Generate questions and validate them
-        
+        Generate questions and validate them.
+
         Returns:
             Tuple of (valid_questions, validation_errors)
+        Raises:
+            Exception: Propagates API / network errors so the caller can show them.
         """
         questions = self.generator.generate_questions_from_pdf(pdf_content, num_questions)
         

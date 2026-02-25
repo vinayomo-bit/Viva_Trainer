@@ -13,7 +13,7 @@ if str(APP_ROOT) not in sys.path:
 
 import streamlit as st
 import fitz  # PyMuPDF
-from langchain_community.llms import OpenAI
+from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
 import time
@@ -42,7 +42,7 @@ if not openai_api_key:
     st.error("⚠️ Please set OPENAI_API_KEY in your .env file")
     st.stop()
 
-llm = OpenAI(openai_api_key=openai_api_key, temperature=0)
+llm = ChatOpenAI(openai_api_key=openai_api_key, model="gpt-3.5-turbo", temperature=0)
 
 # Initialize modules
 scoring_evaluator = AnswerEvaluator(llm)
@@ -656,31 +656,35 @@ def handle_pdf_upload(name, grade, subject, book_title, current_user):
     if st.button("🔍 Generate Viva Questions"):
         if st.session_state.pdf_text_dict:
             full_text = "\n\n".join(st.session_state.pdf_text_dict.values())
-            
-            # Use the new question manager
-            questions, validation_errors = question_manager.generate_and_validate_questions(full_text, 20)
-            
+
+            with st.spinner("Generating questions with AI… this may take a few seconds."):
+                try:
+                    questions, validation_errors = question_manager.generate_and_validate_questions(full_text, 20)
+                except Exception as e:
+                    st.error(f"❌ Error calling AI: {str(e)}")
+                    questions, validation_errors = [], []
+
             if validation_errors:
-                st.warning("Some questions had validation issues:")
+                st.warning("Some questions had minor formatting issues and were skipped:")
                 for error in validation_errors:
                     st.write(f"• {error}")
-            
+
             if questions:
                 st.session_state.all_qas = questions
                 st.session_state.qa_index = 0
                 st.session_state.used_q_indices = []
-                
+
                 # Save questions to database
                 if st.session_state.current_conversation_id:
                     success = db_manager.save_questions(st.session_state.current_conversation_id, questions)
                     if success:
-                        st.success("✅ Viva questions generated and saved to database.")
+                        st.success(f"✅ {len(questions)} viva questions generated and saved.")
                     else:
-                        st.warning("✅ Viva questions generated but couldn't save to database.")
+                        st.warning(f"✅ {len(questions)} viva questions generated but couldn't save to database.")
                 else:
-                    st.success("✅ Viva questions generated.")
-            else:
-                st.error("Failed to generate valid questions. Please try again.")
+                    st.success(f"✅ {len(questions)} viva questions generated.")
+            elif not validation_errors:
+                st.error("❌ No questions could be parsed from the AI response. Try uploading a clearer PDF.")
 
 def handle_predefined_questions(name, grade, subject, book_title, predefined_vars):
     """Handle predefined questions mode"""
